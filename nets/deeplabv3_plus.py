@@ -229,7 +229,7 @@ class DeepLab(nn.Module):
     ):
         super(DeepLab, self).__init__()
         self.backbone_name = backbone
-        if backbone == "deeplabv3_fusion":
+        if backbone == "deeplabv3plus_fusion":
             # ----------------------------------#
             #   获得两个特征层
             #   主干部分    [32,H/4,W/4]
@@ -336,7 +336,7 @@ class DeepLab(nn.Module):
         # -----------------------------------------#
         #   主干特征提取网络
         # -----------------------------------------#
-        if self.backbone_name in ["deeplabv3_fusion"]:
+        if self.backbone_name in ["deeplabv3plus_fusion"]:
             (
                 conv1_features,
                 stage1_features,

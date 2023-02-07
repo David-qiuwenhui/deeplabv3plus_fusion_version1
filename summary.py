@@ -15,8 +15,8 @@ model_cfg = dict(
     num_classes=7,
     # xception, mobilenet, resnet50, resnext50, repvgg_new
     # hrnet, hrnet_new, swin_transformer, mobilevit, mobilenetv3
-    # deeplabv3_fusion
-    backbone="deeplabv3_fusion",
+    # deeplabv3plus_fusion
+    backbone="deeplabv3plus_fusion",
     downsample_factor=8,
     deploy=True,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
