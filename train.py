@@ -21,7 +21,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 model_cfg = dict(
     description="pytorch deeplabv3plus fusion training",
     # ---------- 数据集超参数 -----------
-    data_path="../../dataset/SUIMdevkit_mini",  # dataset root
+    data_path="../../dataset/SUIMdevkit",  # dataset root
     # ---------- 卷积模型超参数 ----------
     # xception, mobilenet, resnet50, resnext50, repvgg_new
     # hrnet, hrnet_new, swin_transformer, mobilevit, mobilenetv3

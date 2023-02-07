@@ -394,10 +394,8 @@ class DeepLabV3PlusFusion(nn.Module):
     ):
         super().__init__()
         # ******************** Conv1 ********************
-        self.conv1 = nn.Sequential(
-            ConvBNActivation(3, 16, kernel_size=3, stride=2, groups=1),
-            ConvBNActivation(16, 32, kernel_size=3, stride=2, groups=1),
-        )
+        self.conv1 = ConvBNActivation(3, 16, kernel_size=3, stride=2, groups=1)
+        self.conv2 = ConvBNActivation(16, 32, kernel_size=3, stride=2, groups=1)
 
         # ******************** Stage1 ********************
         stage1: List[nn.Module] = []
@@ -529,10 +527,15 @@ class DeepLabV3PlusFusion(nn.Module):
         )
 
     def forward(self, x):
-        # ******************** Conv1 and Stage1 ********************
+        # ******************** Conv1 ********************
         x = self.conv1(x)
+        # TODO: 卷积层分开 取第一层级的特征图
+        conv1_features = x  # Conv1层的特征图
+        x = self.conv2(x)
+
+        # ******************** Stage1 ********************
         x = self.stage1(x)
-        low_level_features = x  # 浅层的特征图
+        stage1_features = x  # Stage1层的特征图
 
         # ******************** Transition1 ********************
         x = [
@@ -541,6 +544,7 @@ class DeepLabV3PlusFusion(nn.Module):
 
         # ******************** Stage2 ********************
         x = self.stage2(x)  # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8)]
+        stage2_features = x[0]  # Stage2层的特征图
 
         # ******************** Transition2 ********************
         x = [
@@ -553,6 +557,7 @@ class DeepLabV3PlusFusion(nn.Module):
 
         # ******************** Stage3 ********************
         x = self.stage3(x)  # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8), x2(B,128,H/16,W/16)]
+        stage3_features = x[0]  # Stage3层的特征图
 
         # ******************** Transition3 ********************
         x = [
@@ -566,8 +571,16 @@ class DeepLabV3PlusFusion(nn.Module):
 
         # ******************** Stage4 ********************
         x = self.stage4(x)  # x[x0(B,32,H/4,W/4)] 所有分支上采样至(H/4,W/4)后逐像素点相加输出
+        stage4_features = x[0]  # Stage4层的特征图
 
-        return low_level_features, x[0]
+        return (
+            conv1_features,
+            stage1_features,
+            stage2_features,
+            stage3_features,
+            stage4_features,
+            x[0],
+        )
 
 
 def deeplabv3plus_fusion_backbone(model_type):

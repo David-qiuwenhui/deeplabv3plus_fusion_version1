@@ -1,3 +1,4 @@
+from typing import Callable, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,6 +13,38 @@ from nets.resnext import resnext50_32x4d_backbone
 from nets.swin_transformer import Swin_Transformer_Backbone
 from nets.xception import xception
 from nets.mobilenetv2 import mobilenetv2
+
+# BatchNorm2d 标准化层的超参数
+BN_MOMENTUM = 0.01
+EPS = 0.001
+
+
+class ConvBNActivation(nn.Sequential):
+    def __init__(
+        self,
+        in_planes: int,
+        out_planes: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        groups: int = 1,
+        activation_layer: Optional[Callable[..., nn.Module]] = None,
+    ):
+        padding = (kernel_size - 1) // 2  # 取整除
+        if activation_layer is None:
+            activation_layer = nn.ReLU6
+        super(ConvBNActivation, self).__init__(
+            nn.Conv2d(
+                in_channels=in_planes,
+                out_channels=out_planes,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                groups=groups,
+                bias=False,
+            ),
+            nn.BatchNorm2d(out_planes, eps=EPS, momentum=BN_MOMENTUM),
+            activation_layer(inplace=True),
+        )  # inplace=True 不创建新的对象，直接对原始对象进行修改
 
 
 class MobileNetV2(nn.Module):
@@ -196,111 +229,7 @@ class DeepLab(nn.Module):
     ):
         super(DeepLab, self).__init__()
         self.backbone_name = backbone
-        if backbone == "xception":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   浅层特征    [128,128,256]
-            #   主干部分    [30,30,2048]
-            # ----------------------------------#
-            self.backbone = xception(pretrained, downsample_factor)
-            in_channels = 2048  # 主干部分的特征 (2048,30,30)
-            low_level_channels = 256  # 浅层特征 (256,128,128)
-        elif backbone == "mobilenet":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   浅层特征    [128,128,24]
-            #   主干部分    [30,30,320]
-            # ----------------------------------#
-            self.backbone = MobileNetV2(pretrained, downsample_factor)
-            in_channels = 320  # 主干部分的特征(320,30,30)
-            low_level_channels = 24  # 浅层特征(24,128,128)
-        elif backbone == "resnet50":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [2048,H/8,W/8]
-            #   浅层特征    [256,H/4,W/4]
-            # ----------------------------------#
-            self.backbone = resnet50_backbone(pretrained, backbone_path)
-            in_channels = 2048  # 主干部分的特征
-            low_level_channels = 256  # 浅层次特征
-
-        elif backbone == "resnext50":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [2048,H/8,W/8]
-            #   浅层特征    [256,H/4,W/4]
-            # ----------------------------------#
-            self.backbone = resnext50_32x4d_backbone(
-                pretrained=False, downsample_factor=8
-            )
-
-            in_channels = 2048  # 主干部分的特征
-            low_level_channels = 256  # 浅层次特征
-
-        elif backbone == "repvgg_new":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [2560,H/8,W/8]
-            #   浅层特征    [160,H/4,W/4]
-            # ----------------------------------#
-            self.backbone = repvgg_backbone_new(model_type="RepVGG-B2g4-new")
-            in_channels = 2560  # 主干部分的特征
-            low_level_channels = 160  # 浅层次特征
-
-        elif backbone == "hrnet":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [480,H/8,W/8]
-            #   浅层特征    [256,H/4,W/4]
-            # ----------------------------------#
-            self.backbone = HRNet_Backbone(
-                backbone="hrnetv2_w32", pretrained=pretrained
-            )
-            in_channels = 480  # 主干部分的特征
-            low_level_channels = 256  # 浅层次特征
-
-        elif backbone == "hrnet_new":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [32,H/4,W/4]
-            #   浅层特征    [256,H/4,W/4]
-            #   注意：hrnet_new 的深浅层次融合特征尺寸是相同的
-            # ----------------------------------#
-            self.backbone = HRNet_Backbone_New(model_type="hrnet_w32")
-            in_channels = 32  # 主干部分的特征
-            low_level_channels = 256  # 浅层次特征
-
-        elif backbone == "swin_transformer":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [1024,H/8,W/8]
-            #   浅层特征    [256,H/4,W/4]
-            # ----------------------------------#
-            self.backbone = Swin_Transformer_Backbone()
-            in_channels = 1024
-            low_level_channels = 256
-
-        elif backbone == "mobilevit":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [640,H/8,W/8]
-            #   浅层特征    [64,H/4,W/4]
-            # ----------------------------------#
-            self.backbone = mobile_vit_small_backbone(model_type="small")
-            in_channels = 640
-            low_level_channels = 64
-
-        elif backbone == "mobilenetv3":
-            # ----------------------------------#
-            #   获得两个特征层
-            #   主干部分    [640,H/8,W/8]
-            #   浅层特征    [64,H/4,W/4]
-            # ----------------------------------#
-            self.backbone = mobilenet_v3_large_backbone(model_type="large")
-            in_channels = 160
-            low_level_channels = 40
-
-        elif backbone == "deeplabv3_fusion":
+        if backbone == "deeplabv3_fusion":
             # ----------------------------------#
             #   获得两个特征层
             #   主干部分    [32,H/4,W/4]
@@ -308,8 +237,16 @@ class DeepLab(nn.Module):
             # ----------------------------------#
             self.backbone = deeplabv3plus_fusion_backbone(model_type="hrnet_w32")
             in_channels = 32
-            low_level_channels = 32
+            # low_level_channels = 32
+            # 浅层特征的通道数量
+            conv1_channels = 16
+            stage1_channels = 32
+            stage2_channels = 32
+            stage3_channels = 32
+            stage4_channels = 32
 
+            # ASPP模块融合后输出的通道数量
+            aspp_channels = 256
         else:
             raise ValueError(
                 "Unsupported backbone - `{}`, Use mobilenet, xception.".format(backbone)
@@ -320,93 +257,147 @@ class DeepLab(nn.Module):
         #   利用不同膨胀率的膨胀卷积进行特征提取
         # -----------------------------------------#
         self.aspp = ASPP(
-            dim_in=in_channels, dim_out=256, rate=16 // downsample_factor
+            dim_in=in_channels, dim_out=aspp_channels, rate=16 // downsample_factor
         )  # dim_in=2048 dim_out=256 rate=2
 
         # ----------------------------------#
-        #   浅层特征边的卷积处理模块 将通道维度调整为48
+        #   浅、中层特征图的卷积传递层
         # ----------------------------------#
-        self.shortcut_conv = nn.Sequential(
-            nn.Conv2d(
-                in_channels=low_level_channels,
-                out_channels=256,  # deeplabv3plus 48
-                kernel_size=1,
-            ),
-            nn.BatchNorm2d(num_features=256),
-            nn.ReLU(inplace=True),
+        self.shortcut_conv0 = ConvBNActivation(
+            in_planes=conv1_channels,
+            out_planes=conv1_channels,
+            kernel_size=1,
+            stride=1,
         )
 
-        # Concat拼接浅层特征和ASPP处理后的特征
-        self.cat_conv = nn.Sequential(
-            nn.Conv2d(
-                in_channels=512,
-                out_channels=256,
-                kernel_size=3,
-                stride=1,
-                padding=1,
-            ),
-            nn.BatchNorm2d(num_features=256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5),
-            nn.Conv2d(
-                in_channels=256, out_channels=256, kernel_size=3, stride=1, padding=1
-            ),
-            nn.BatchNorm2d(num_features=256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
+        self.shortcut_conv1 = ConvBNActivation(
+            in_planes=stage1_channels,
+            out_planes=stage1_channels,
+            kernel_size=1,
+            stride=1,
         )
+
+        self.shortcut_conv2 = ConvBNActivation(
+            in_planes=stage2_channels,
+            out_planes=stage2_channels,
+            kernel_size=1,
+            stride=1,
+        )
+
+        self.shortcut_conv3 = ConvBNActivation(
+            in_planes=stage3_channels,
+            out_planes=stage3_channels,
+            kernel_size=1,
+            stride=1,
+        )
+
+        self.shortcut_conv4 = ConvBNActivation(
+            in_planes=stage4_channels,
+            out_planes=stage4_channels,
+            kernel_size=1,
+            stride=1,
+        )
+
+        # ----------------------------------#
+        #   第一阶段的深浅层次特征图卷积处理模块
+        # ----------------------------------#
+        self.cat_conv1 = nn.Sequential(
+            ConvBNActivation(
+                in_planes=aspp_channels + stage1_channels * 4,
+                out_planes=256,
+                kernel_size=3,
+            ),
+            ConvBNActivation(
+                in_planes=256,
+                out_planes=256,
+                kernel_size=3,
+            ),
+        )
+
+        # ----------------------------------#
+        #   第二阶段的深浅层次特征图卷积处理模块
+        # ----------------------------------#
+        self.cat_conv2 = ConvBNActivation(
+            in_planes=256 + conv1_channels,
+            out_planes=256,
+            kernel_size=3,
+        )
+
+        # ----------------------------------#
+        #   DeepLabV3Plus Head 将特征图转换为N个类别预测掩码图像
+        # ----------------------------------#
         # 更改channels至num_classes
         self.cls_conv = nn.Conv2d(
             in_channels=256, out_channels=num_classes, kernel_size=1, stride=1
         )
 
     def forward(self, x):
-        H, W = x.size(2), x.size(3)  # x(bs,3,H,W)
+        H, W = x.size(2), x.size(3)  # x(B,3,H,W)
         # -----------------------------------------#
-        #   特征提取 获得两个特征层
-        #   low_level_features: 浅层特征-进行卷积处理 (B, 256, H/4, W/4)  处理4倍下采样feature maps
-        #   x : 主干部分-利用ASPP结构进行加强特征提取 (B, 2048, H/8, W/8)  处理8倍下采样feature maps
+        #   主干特征提取网络
         # -----------------------------------------#
-
-        if self.backbone_name in [
-            "xception",
-            "mobilenet",
-            "repvgg_new",
-            "hrnet",
-            "hrnet_new",
-            "swin_transformer",
-            "mobilevit",
-            "mobilenetv3",
-            "deeplabv3_fusion",
-        ]:
-            low_level_features, x = self.backbone(x)
-        elif self.backbone_name in ["resnet50", "resnext50"]:
-            features = self.backbone(x)
-            low_level_features = features["low_features"]  # (B, 256, H/4, W/4)
-            x = features["main"]  # (B, 2048, H/8, W/8)
-
-        x = self.aspp(x)  # x(bs, 256, H/8, W/8)
-        low_level_features = self.shortcut_conv(
-            low_level_features
-        )  # low_level_features(bs, 256, H/4, W/4)
+        if self.backbone_name in ["deeplabv3_fusion"]:
+            (
+                conv1_features,
+                stage1_features,
+                stage2_features,
+                stage3_features,
+                stage4_features,
+                x,
+            ) = self.backbone(x)
 
         # -----------------------------------------#
-        #   将加强特征边上采样
-        #   与浅层特征堆叠后利用卷积进行特征提取
+        #   膨胀卷积池化金字塔模块
+        # -----------------------------------------#
+        x = self.aspp(x)  # x(B,256,H/4,W/4)
+
+        # -----------------------------------------#
+        #   浅中层特征图的传递和卷积处理
+        # -----------------------------------------#
+        conv1_features = self.shortcut_conv0(conv1_features)
+        stage1_features = self.shortcut_conv1(stage1_features)
+        stage2_features = self.shortcut_conv2(stage2_features)
+        stage3_features = self.shortcut_conv3(stage3_features)
+        stage4_features = self.shortcut_conv4(stage4_features)
+
+        # -----------------------------------------#
+        #   第一阶段的深浅层特征融合
+        #   将主分支的加强特征进行上采样
+        #   加强特征与浅层特征拼接后再利用卷积进行特征融合
         # -----------------------------------------#
         x = F.interpolate(
             input=x,
-            size=(low_level_features.size(2), low_level_features.size(3)),
+            size=(stage1_features.size(2), stage1_features.size(3)),
             mode="bilinear",
             align_corners=True,
-        )  # x(bs, 256, H/8, W/8) -> x(bs, 256, H/4, W/4)
-        x = self.cat_conv(
-            torch.cat((x, low_level_features), dim=1)  # (bs,304,H/4,W/4)
-        )  # x(bs, 256, H/4, W/4)
+        )
+        x = self.cat_conv1(
+            torch.cat(
+                (x, stage1_features, stage2_features, stage3_features, stage4_features),
+                dim=1,
+            )
+        )
+
+        # -----------------------------------------#
+        #   第二阶段的深浅层特征融合
+        #   将主分支的特征进行上采样
+        #   主分支的特征与浅层特征拼接后再利用卷积进行特征融合
+        # -----------------------------------------#
+        x = F.interpolate(
+            input=x,
+            size=(conv1_features.size(2), conv1_features.size(3)),
+            mode="bilinear",
+            align_corners=True,
+        )
+        x = self.cat_conv2(torch.cat((x, conv1_features), dim=1))
+
+        # -----------------------------------------#
+        #   特征上采样至原图大小
+        # -----------------------------------------#
         x = self.cls_conv(x)  # x(bs, num_classes, H/4, W/4)
         x = F.interpolate(
             input=x, size=(H, W), mode="bilinear", align_corners=True
-        )  # x(bs, num_classes, H, W)
+        )  # x(B, N, H, W)
         return x
 
     def switch_to_deploy(self):
@@ -416,4 +407,4 @@ class DeepLab(nn.Module):
                 f"\033[1;33;44m 🔬🔬🔬🔬 Switch {self.backbone_name} to deploy model \033[0m"
             )
         else:
-            print(f"\033[1;31;41m 🔬🔬🔬🔬 Can not Switch to deploy model \033[0m")
+            print(f"\033[1;31;41m 🔬🔬🔬🔬 Can not switch to deploy model \033[0m")
