@@ -9,7 +9,9 @@ from torch import Tensor
 import torch.nn as nn
 from torch.nn import functional as F
 
-BN_MOMENTUM = 0.1
+# BatchNorm2d 标准化层的超参数
+BN_MOMENTUM = 0.01
+EPS = 0.001
 
 
 def _make_divisible(ch, divisor=8, min_ch=None):
@@ -51,7 +53,7 @@ class ConvBNActivation(nn.Sequential):
                 groups=groups,
                 bias=False,
             ),
-            nn.BatchNorm2d(out_planes, momentum=BN_MOMENTUM),
+            nn.BatchNorm2d(out_planes, eps=EPS, momentum=BN_MOMENTUM),
             activation_layer(inplace=True),
         )  # inplace=True 不创建新的对象，直接对原始对象进行修改
 
@@ -79,95 +81,27 @@ class SqueezeExcitation(nn.Module):
 class InvertedResidualConfig:
     def __init__(
         self,
-        input_c: int,
+        in_planes: int,
+        expanded_planes: int,
+        out_planes: int,
         kernel: int,
-        expanded_c: int,
-        out_c: int,
-        use_se: bool,
-        activation: str,
         stride: int,
+        activation: str,
+        use_se: bool,
         width_multi: float,
     ):
-        self.input_c = self.adjust_channels(input_c, width_multi)
+        self.in_planes = self.adjust_channels(in_planes, width_multi)
+        self.expanded_planes = self.adjust_channels(expanded_planes, width_multi)
+        self.out_planes = self.adjust_channels(out_planes, width_multi)
         self.kernel = kernel
-        self.expanded_c = self.adjust_channels(expanded_c, width_multi)
-        self.out_c = self.adjust_channels(out_c, width_multi)
-        self.use_se = use_se
-        self.use_hs = activation == "HS"  # whether using h-swish activation
         self.stride = stride
+        self.use_se = use_se
+        self.use_hs = activation == "HS"
 
     @staticmethod
-    def adjust_channels(
-        channels: int, width_multi: float
-    ):  # 获取8的整数倍的channels（更大化利用硬件资源和加速训练）
+    def adjust_channels(channels: int, width_multi: float):
+        # 获取8的整数倍的channels（更大化利用硬件资源和加速训练）
         return _make_divisible(channels * width_multi, 8)
-
-
-class InvertedResidual(nn.Module):
-    def __init__(
-        self,
-        cnf: InvertedResidualConfig,
-    ):
-        super(InvertedResidual, self).__init__()
-
-        if cnf.stride not in [1, 2]:
-            raise ValueError("illegal stride value.")
-
-        # 检测是否使用shortcu捷径分支（stride=1不进行下采样 and input_c==output_c）
-        self.use_res_connect = cnf.stride == 1 and cnf.input_c == cnf.out_c
-
-        layers: List[nn.Module] = []
-        activation_layer = nn.Hardswish if cnf.use_hs else nn.ReLU
-
-        # 使用conv2d 1*1卷积模块进行升维操作
-        # Expand block
-        if cnf.expanded_c != cnf.input_c:
-            layers.append(
-                ConvBNActivation(
-                    cnf.input_c,
-                    cnf.expanded_c,
-                    kernel_size=1,
-                    activation_layer=activation_layer,
-                )
-            )
-
-        # Depthwise block 逐通道卷积Depthwise Conv
-        layers.append(
-            ConvBNActivation(
-                cnf.expanded_c,
-                cnf.expanded_c,
-                kernel_size=cnf.kernel,
-                stride=cnf.stride,
-                groups=cnf.expanded_c,
-                activation_layer=activation_layer,
-            )
-        )
-
-        # SqueezeExcitation attention block
-        if cnf.use_se:  # 使用SE通道注意力机制
-            layers.append(SqueezeExcitation(cnf.expanded_c))
-            # SqueezeExcitation(AdaptiveAvgPool->fc1->ReLU->fc2->hardsigmoid  input*SE_result
-
-        # Project block 逐点卷积Pointwise Conv
-        layers.append(
-            ConvBNActivation(
-                cnf.expanded_c,
-                cnf.out_c,
-                kernel_size=1,
-                activation_layer=nn.Identity,
-            )
-        )  # nn.Identity 线性激活
-
-        self.block = nn.Sequential(*layers)
-        self.out_channels = cnf.out_c
-        self.is_strided = cnf.stride > 1
-
-    def forward(self, x: Tensor) -> Tensor:
-        result = self.block(x)
-        if self.use_res_connect:
-            result += x
-
-        return result
 
 
 class BasicBlockNew(nn.Module):
@@ -264,9 +198,9 @@ class InvertedBotteneck(nn.Module):
         self.activation_layer = nn.Hardswish if use_hs else nn.ReLU6
         self.activation = self.activation_layer(inplace=True)
 
-        # ******************** shortcut连接的下采样层 ********************
+        # ******************** 跳跃连接的下采样层 ********************
         if downsample is None:
-            if in_planes != expanded_planes and stride != 1:
+            if in_planes != out_planes or stride != 1:
                 self.downsample = ConvBNActivation(
                     in_planes,
                     out_planes,
@@ -328,48 +262,6 @@ class InvertedBotteneck(nn.Module):
         return out
 
 
-class Bottleneck(nn.Module):
-    expansion = 4
-
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(Bottleneck, self).__init__()
-        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes, momentum=BN_MOMENTUM)
-        self.conv2 = nn.Conv2d(
-            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
-        )
-        self.bn2 = nn.BatchNorm2d(planes, momentum=BN_MOMENTUM)
-        self.conv3 = nn.Conv2d(
-            planes, planes * self.expansion, kernel_size=1, bias=False
-        )
-        self.bn3 = nn.BatchNorm2d(planes * self.expansion, momentum=BN_MOMENTUM)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.stride = stride
-
-    def forward(self, x):
-        residual = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-
-        out = self.conv3(out)
-        out = self.bn3(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(x)
-
-        out += residual
-        out = self.relu(out)
-
-        return out
-
-
 class StageModule(nn.Module):
     def __init__(self, input_branches, output_branches, c, expanded_rate):
         """
@@ -386,10 +278,18 @@ class StageModule(nn.Module):
         for i in range(self.input_branches):  # 每个分支上都先通过4个BasicBlock
             w = c * (2**i)  # 对应第i个分支的通道数
             branch = nn.Sequential(
-                BasicBlockNew(in_planes=w, expanded_planes=w * 4, out_planes=w),
-                BasicBlockNew(in_planes=w, expanded_planes=w * 4, out_planes=w),
-                BasicBlockNew(in_planes=w, expanded_planes=w * 4, out_planes=w),
-                BasicBlockNew(in_planes=w, expanded_planes=w * 4, out_planes=w),
+                BasicBlockNew(
+                    in_planes=w, expanded_planes=w * expanded_rate, out_planes=w
+                ),
+                BasicBlockNew(
+                    in_planes=w, expanded_planes=w * expanded_rate, out_planes=w
+                ),
+                BasicBlockNew(
+                    in_planes=w, expanded_planes=w * expanded_rate, out_planes=w
+                ),
+                BasicBlockNew(
+                    in_planes=w, expanded_planes=w * expanded_rate, out_planes=w
+                ),
             )
             self.branches.append(branch)
 
@@ -413,7 +313,7 @@ class StageModule(nn.Module):
                                 bias=False,
                             ),
                             nn.BatchNorm2d(
-                                num_features=c * (2**i), momentum=BN_MOMENTUM
+                                num_features=c * (2**i), eps=EPS, momentum=BN_MOMENTUM
                             ),
                             nn.Upsample(scale_factor=2.0 ** (j - i), mode="bilinear"),
                         )
@@ -437,7 +337,9 @@ class StageModule(nn.Module):
                                     bias=False,
                                 ),
                                 nn.BatchNorm2d(
-                                    num_features=c * (2**j), momentum=BN_MOMENTUM
+                                    num_features=c * (2**j),
+                                    eps=EPS,
+                                    momentum=BN_MOMENTUM,
                                 ),
                                 nn.ReLU(inplace=True),
                             )
@@ -454,7 +356,7 @@ class StageModule(nn.Module):
                                 bias=False,
                             ),
                             nn.BatchNorm2d(
-                                num_features=c * (2**i), momentum=BN_MOMENTUM
+                                num_features=c * (2**i), eps=EPS, momentum=BN_MOMENTUM
                             ),
                         )
                     )
@@ -483,69 +385,83 @@ class StageModule(nn.Module):
         return x_fused
 
 
-class HighResolutionNet(nn.Module):
-    def __init__(self, base_channel: int = 32, num_joints: int = 17):
+# TODO
+class DeepLabV3PlusFusion(nn.Module):
+    def __init__(
+        self,
+        base_channel,
+        inverted_residual_setting: List,
+    ):
         super().__init__()
-        # Stem 使用两个卷积模块进行四倍下采样
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(64, momentum=BN_MOMENTUM)
-        self.conv2 = nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(64, momentum=BN_MOMENTUM)
-        self.relu = nn.ReLU(inplace=True)
-
-        # Stage1
-        downsample = nn.Sequential(
-            nn.Conv2d(64, 256, kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
-        )
-        self.layer1 = nn.Sequential(
-            Bottleneck(inplanes=64, planes=64, downsample=downsample),
-            Bottleneck(inplanes=256, planes=64),
-            Bottleneck(inplanes=256, planes=64),
-            Bottleneck(inplanes=256, planes=64),
+        # ******************** Conv1 ********************
+        self.conv1 = nn.Sequential(
+            ConvBNActivation(3, 16, kernel_size=3, stride=2, groups=1),
+            ConvBNActivation(16, 16, kernel_size=3, stride=1, groups=1),
         )
 
+        # ******************** Stage1 ********************
+        stage1: List[nn.Module] = []
+        stage1_setting = inverted_residual_setting["stage1"]
+        for cnf in stage1_setting:
+            stage1.append(
+                InvertedBotteneck(
+                    cnf.in_planes,
+                    cnf.expanded_planes,
+                    cnf.out_planes,
+                    cnf.kernel,
+                    cnf.stride,
+                    cnf.use_hs,
+                    cnf.use_se,
+                )
+            )
+        self.stage1 = nn.Sequential(*stage1)
+
+        # ******************** Transition1 ********************
         self.transition1 = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.Conv2d(
-                        in_channels=256,
+                        in_channels=stage1_setting[-1].out_planes,
                         out_channels=base_channel,
                         kernel_size=3,
                         stride=1,
                         padding=1,
                         bias=False,
                     ),
-                    nn.BatchNorm2d(base_channel, momentum=BN_MOMENTUM),
+                    nn.BatchNorm2d(base_channel, eps=EPS, momentum=BN_MOMENTUM),
                     nn.ReLU(inplace=True),
                 ),
                 nn.Sequential(
-                    nn.Sequential(  # 这里又使用一次Sequential是为了适配原项目中提供的权重
+                    # TODO: 这个地方嵌套多了一层 nn.Sequential
+                    # HRNet中是为了适配原项目中提供的权重
+                    nn.Sequential(
                         nn.Conv2d(
-                            in_channels=256,
+                            in_channels=stage1_setting[-1].out_planes,
                             out_channels=base_channel * 2,
                             kernel_size=3,
                             stride=2,
                             padding=1,
                             bias=False,
                         ),
-                        nn.BatchNorm2d(base_channel * 2, momentum=BN_MOMENTUM),
+                        nn.BatchNorm2d(base_channel * 2, eps=EPS, momentum=BN_MOMENTUM),
                         nn.ReLU(inplace=True),
                     )
                 ),
             ]
         )
 
-        # Stage2
+        # ******************** Stage2 ********************
         self.stage2 = nn.Sequential(
-            StageModule(input_branches=2, output_branches=2, c=base_channel)
+            StageModule(
+                input_branches=2, output_branches=2, c=base_channel, expanded_rate=4
+            ),
         )
 
-        # transition2
+        # ******************** Transition2 ********************
         self.transition2 = nn.ModuleList(
             [
-                nn.Identity(),  # None,  - Used in place of "None" because it is callable
-                nn.Identity(),  # None,  - Used in place of "None" because it is callable
+                nn.Identity(),
+                nn.Identity(),
                 nn.Sequential(
                     nn.Sequential(
                         nn.Conv2d(
@@ -557,7 +473,7 @@ class HighResolutionNet(nn.Module):
                             bias=False,
                         ),
                         nn.BatchNorm2d(
-                            num_features=base_channel * 4, momentum=BN_MOMENTUM
+                            num_features=base_channel * 4, eps=EPS, momentum=BN_MOMENTUM
                         ),
                         nn.ReLU(inplace=True),
                     )
@@ -565,20 +481,28 @@ class HighResolutionNet(nn.Module):
             ]
         )
 
-        # Stage3
+        # ******************** Stage3 ********************
         self.stage3 = nn.Sequential(
-            StageModule(input_branches=3, output_branches=3, c=base_channel),
-            StageModule(input_branches=3, output_branches=3, c=base_channel),
-            StageModule(input_branches=3, output_branches=3, c=base_channel),
-            StageModule(input_branches=3, output_branches=3, c=base_channel),
+            StageModule(
+                input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
+            ),
+            StageModule(
+                input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
+            ),
+            StageModule(
+                input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
+            ),
+            StageModule(
+                input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
+            ),
         )
 
-        # transition3
+        # ******************** transition3 ********************
         self.transition3 = nn.ModuleList(
             [
-                nn.Identity(),  # None,  - Used in place of "None" because it is callable
-                nn.Identity(),  # None,  - Used in place of "None" because it is callable
-                nn.Identity(),  # None,  - Used in place of "None" because it is callable
+                nn.Identity(),
+                nn.Identity(),
+                nn.Identity(),
                 nn.Sequential(
                     nn.Sequential(
                         nn.Conv2d(
@@ -590,7 +514,7 @@ class HighResolutionNet(nn.Module):
                             bias=False,
                         ),
                         nn.BatchNorm2d(
-                            num_features=base_channel * 8, momentum=BN_MOMENTUM
+                            num_features=base_channel * 8, eps=EPS, momentum=BN_MOMENTUM
                         ),
                         nn.ReLU(inplace=True),
                     )
@@ -598,150 +522,81 @@ class HighResolutionNet(nn.Module):
             ]
         )
 
-        # Stage4
+        # ******************** Stage4 ********************
         # 注意，最后一个StageModule只输出分辨率最高的特征层
         self.stage4 = nn.Sequential(
-            StageModule(input_branches=4, output_branches=4, c=base_channel),
-            StageModule(input_branches=4, output_branches=4, c=base_channel),
-            StageModule(input_branches=4, output_branches=1, c=base_channel),
+            StageModule(
+                input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
+            ),
+            StageModule(
+                input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
+            ),
+            StageModule(
+                input_branches=4, output_branches=1, c=base_channel, expanded_rate=4
+            ),
         )
 
     def forward(self, x):
-        x = self.conv1(x)  # x(B,3,H,W) -> x(B,64,H/2,W/2)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)  # x(B,64,H/4,W/4)
-        x = self.bn2(x)
-        x = self.relu(x)
-
-        x = self.layer1(x)  # x(B,256,H/4,W/4)
+        # ******************** Conv1 and Stage1 ********************
+        x = self.conv1(x)
+        x = self.stage1(x)
         low_level_features = x  # 浅层的特征图
 
+        # ******************** Transition1 ********************
         x = [
             trans(x) for trans in self.transition1
-        ]  # Since now, x is a list  # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8)]
+        ]  # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8)]
 
+        # ******************** Stage2 ********************
         x = self.stage2(x)  # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8)]
+
+        # ******************** Transition2 ********************
         x = [
             self.transition2[0](x[0]),
             self.transition2[1](x[1]),
             self.transition2[2](x[-1]),
-        ]  # New branch derives from the "upper" branch only
+        ]
+        # 新的分支由此stage尺度最小的特征下采样和升高维度得到
         # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8), x2(B,128,H/16,W/16)]
 
+        # ******************** Stage3 ********************
         x = self.stage3(x)  # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8), x2(B,128,H/16,W/16)]
+
+        # ******************** Transition3 ********************
         x = [
             self.transition3[0](x[0]),
             self.transition3[1](x[1]),
             self.transition3[2](x[2]),
             self.transition3[3](x[-1]),
-        ]  # New branch derives from the "upper" branch only
+        ]
+        # 新的分支由此stage尺度最小的特征下采样和升高维度得到
         # x[x0(B,32,H/4,W/4), x1(B,64,H/8,W/8), x2(B,128,H/16,W/16), x3(B,256,H/32,W/32)]
 
+        # ******************** Stage4 ********************
         x = self.stage4(x)  # x[x0(B,32,H/4,W/4)] 所有分支上采样至(H/4,W/4)后逐像素点相加输出
 
         return low_level_features, x[0]
 
 
-def HRNet_Backbone_New(model_type):
+def deeplabv3plus_fusion_backbone(model_type):
     if model_type == "hrnet_w18":
-        backbone = HighResolutionNet(base_channel=18)
+        base_channel = 18
     elif model_type == "hrnet_w32":
-        backbone = HighResolutionNet(base_channel=32)
+        base_channel = 32
     elif model_type == "hrnet_w48":
-        backbone = HighResolutionNet(base_channel=48)
+        base_channel = 48
 
-    return backbone
-
-
-class DeepLabV3PlusFusion(nn.Module):
-    def __init__(
-        self,
-        base_channel,
-        inverted_residual_setting: List,
-        block: Optional[Callable[..., nn.Module]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
-    ):
-        super().__init__()
-        if block is None:
-            block = InvertedResidual
-        if norm_layer is None:
-            norm_layer = partial(nn.BatchNorm2d, eps=0.001, momentum=0.01)
-
-        # ******************** Conv1 ********************
-        self.conv1 = nn.Sequential(
-            ConvBNActivation(3, 16, kernel_size=3, stride=2, groups=1),
-            ConvBNActivation(16, 16, kernel_size=3, stride=1, groups=1),
-        )
-
-        # ******************** Stage1 ********************
-        stage1: List[nn.Module] = []
-        stage1_setting = inverted_residual_setting["stage1"]
-        for cnf in stage1_setting:
-            stage1.append(block(cnf, norm_layer))
-        self.stage1 = nn.Sequential(*stage1)
-
-        # TODO
-        # TODO
-        # TODO
-
-        self.stage1 = nn.Sequential(
-            InvertedBotteneck(
-                16,
-            )
-        )
-
-        # ******************** Transition1 ********************
-        self.transition1 = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Conv2d(
-                        in_channels=stage1_setting[-1].out_c,
-                        out_channels=base_channel,
-                        kernel_size=3,
-                        stride=1,
-                        padding=1,
-                        bias=False,
-                    ),
-                    nn.BatchNorm2d(base_channel, momentum=BN_MOMENTUM),
-                    nn.ReLU(inplace=True),
-                ),
-                nn.Sequential(
-                    nn.Sequential(
-                        nn.Conv2d(
-                            in_channels=256,
-                            out_channels=base_channel * 2,
-                            kernel_size=3,
-                            stride=2,
-                            padding=1,
-                            bias=False,
-                        ),
-                        nn.BatchNorm2d(base_channel * 2, momentum=BN_MOMENTUM),
-                        nn.ReLU(inplace=True),
-                    )
-                ),
-            ]
-        )
-
-        # Stage2
-        self.stage2 = nn.Sequential(
-            StageModule(input_branches=2, output_branches=2, c=base_channel)
-        )
-
-
-def deeplabv3plus_fusion_backbone():
     width_multi = 1.0
     bneck_conf = partial(InvertedResidualConfig, width_multi=width_multi)
 
     # 定义Stage1模块倒残差模块的参数 InvertedResidualConfig
-    # input_c, kernel, expanded_c, out_c, use_se, activation, stride
+    # in_planes, expanded_planes, out_planes, kernel, stride, activation, use_se, width_multi
     stage1_setting = [
-        bneck_conf(16, 3, 16, 16, False, "RE", 1),
-        bneck_conf(16, 3, 64, 24, False, "RE", 2),
-        bneck_conf(24, 3, 72, 24, False, "RE", 1),
-        bneck_conf(24, 3, 72, 40, False, "RE", 1),
+        bneck_conf(16, 64, 32, 3, 1, "RE", False),
+        bneck_conf(32, 128, 64, 3, 2, "RE", False),
+        bneck_conf(64, 256, 128, 3, 1, "RE", False),
+        bneck_conf(128, 512, 256, 3, 1, "RE", False),
     ]
-
     inverted_residual_setting = dict(stage1=stage1_setting)
 
-    return DeepLabV3PlusFusion(32, inverted_residual_setting)
+    return DeepLabV3PlusFusion(base_channel, inverted_residual_setting)

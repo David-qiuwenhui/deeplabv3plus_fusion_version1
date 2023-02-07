@@ -25,11 +25,12 @@ model_cfg = dict(
     # ---------- 卷积模型超参数 ----------
     # xception, mobilenet, resnet50, resnext50, repvgg_new
     # hrnet, hrnet_new, swin_transformer, mobilevit, mobilenetv3
-    backbone="hrnet_new",  #  所使用的的主干网络 "mobilenet", "xception"
+    # deeplabv3_fusion
+    backbone="deeplabv3_fusion",  #  所使用的的主干网络 "mobilenet", "xception"
     num_classes=7,
     input_shape=[512, 512],  # the size of input image
     downsample_factor=8,
-    aux_branch=None,  # auxilier loss
+    aux_branch=None,  # auxilier loss 辅助分类器
     pretrained_backbone=False,
     backbone_path="",
     # ---------- 硬件的超参数 ----------
@@ -39,8 +40,8 @@ model_cfg = dict(
     sync_bn=False,  # 是否使用sync_bn，DDP模式多卡可用
     # ---------- 训练Epoch和Batch size超参数 ----------
     freeze_train=False,
-    freeze_batch_size=16,
-    unfreeze_batch_size=16,
+    freeze_batch_size=8,
+    unfreeze_batch_size=8,
     model_path="",
     init_epoch=0,
     freeze_epochs=0,

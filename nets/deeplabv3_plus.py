@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from nets.deeplabv3plus_fusion import deeplabv3plus_fusion_backbone
 from nets.hrnet import HRNet_Backbone, hrnet_classification
 from nets.hrnet_new import HRNet_Backbone_New
 from nets.mobilenetv3 import mobilenet_v3_large_backbone
@@ -298,6 +299,17 @@ class DeepLab(nn.Module):
             self.backbone = mobilenet_v3_large_backbone(model_type="large")
             in_channels = 160
             low_level_channels = 40
+
+        elif backbone == "deeplabv3_fusion":
+            # ----------------------------------#
+            #   获得两个特征层
+            #   主干部分    [32,H/4,W/4]
+            #   浅层特征    [256,H/4,W/4]
+            # ----------------------------------#
+            self.backbone = deeplabv3plus_fusion_backbone(model_type="hrnet_w32")
+            in_channels = 32
+            low_level_channels = 256
+
         else:
             raise ValueError(
                 "Unsupported backbone - `{}`, Use mobilenet, xception.".format(backbone)
@@ -361,10 +373,11 @@ class DeepLab(nn.Module):
             "mobilenet",
             "repvgg_new",
             "hrnet",
+            "hrnet_new",
             "swin_transformer",
             "mobilevit",
             "mobilenetv3",
-            "hrnet_new",
+            "deeplabv3_fusion",
         ]:
             low_level_features, x = self.backbone(x)
         elif self.backbone_name in ["resnet50", "resnext50"]:
