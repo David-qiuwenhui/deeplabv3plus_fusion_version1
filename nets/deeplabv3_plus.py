@@ -308,7 +308,7 @@ class DeepLab(nn.Module):
             # ----------------------------------#
             self.backbone = deeplabv3plus_fusion_backbone(model_type="hrnet_w32")
             in_channels = 32
-            low_level_channels = 256
+            low_level_channels = 32
 
         else:
             raise ValueError(

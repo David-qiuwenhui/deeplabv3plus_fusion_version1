@@ -396,7 +396,7 @@ class DeepLabV3PlusFusion(nn.Module):
         # ******************** Conv1 ********************
         self.conv1 = nn.Sequential(
             ConvBNActivation(3, 16, kernel_size=3, stride=2, groups=1),
-            ConvBNActivation(16, 16, kernel_size=3, stride=1, groups=1),
+            ConvBNActivation(16, 32, kernel_size=3, stride=2, groups=1),
         )
 
         # ******************** Stage1 ********************
@@ -432,20 +432,16 @@ class DeepLabV3PlusFusion(nn.Module):
                     nn.ReLU(inplace=True),
                 ),
                 nn.Sequential(
-                    # TODO: 这个地方嵌套多了一层 nn.Sequential
-                    # HRNet中是为了适配原项目中提供的权重
-                    nn.Sequential(
-                        nn.Conv2d(
-                            in_channels=stage1_setting[-1].out_planes,
-                            out_channels=base_channel * 2,
-                            kernel_size=3,
-                            stride=2,
-                            padding=1,
-                            bias=False,
-                        ),
-                        nn.BatchNorm2d(base_channel * 2, eps=EPS, momentum=BN_MOMENTUM),
-                        nn.ReLU(inplace=True),
-                    )
+                    nn.Conv2d(
+                        in_channels=stage1_setting[-1].out_planes,
+                        out_channels=base_channel * 2,
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                        bias=False,
+                    ),
+                    nn.BatchNorm2d(base_channel * 2, eps=EPS, momentum=BN_MOMENTUM),
+                    nn.ReLU(inplace=True),
                 ),
             ]
         )
@@ -463,20 +459,18 @@ class DeepLabV3PlusFusion(nn.Module):
                 nn.Identity(),
                 nn.Identity(),
                 nn.Sequential(
-                    nn.Sequential(
-                        nn.Conv2d(
-                            in_channels=base_channel * 2,
-                            out_channels=base_channel * 4,
-                            kernel_size=3,
-                            stride=2,
-                            padding=1,
-                            bias=False,
-                        ),
-                        nn.BatchNorm2d(
-                            num_features=base_channel * 4, eps=EPS, momentum=BN_MOMENTUM
-                        ),
-                        nn.ReLU(inplace=True),
-                    )
+                    nn.Conv2d(
+                        in_channels=base_channel * 2,
+                        out_channels=base_channel * 4,
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                        bias=False,
+                    ),
+                    nn.BatchNorm2d(
+                        num_features=base_channel * 4, eps=EPS, momentum=BN_MOMENTUM
+                    ),
+                    nn.ReLU(inplace=True),
                 ),
             ]
         )
@@ -504,20 +498,18 @@ class DeepLabV3PlusFusion(nn.Module):
                 nn.Identity(),
                 nn.Identity(),
                 nn.Sequential(
-                    nn.Sequential(
-                        nn.Conv2d(
-                            in_channels=base_channel * 4,
-                            out_channels=base_channel * 8,
-                            kernel_size=3,
-                            stride=2,
-                            padding=1,
-                            bias=False,
-                        ),
-                        nn.BatchNorm2d(
-                            num_features=base_channel * 8, eps=EPS, momentum=BN_MOMENTUM
-                        ),
-                        nn.ReLU(inplace=True),
-                    )
+                    nn.Conv2d(
+                        in_channels=base_channel * 4,
+                        out_channels=base_channel * 8,
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                        bias=False,
+                    ),
+                    nn.BatchNorm2d(
+                        num_features=base_channel * 8, eps=EPS, momentum=BN_MOMENTUM
+                    ),
+                    nn.ReLU(inplace=True),
                 ),
             ]
         )
@@ -592,10 +584,10 @@ def deeplabv3plus_fusion_backbone(model_type):
     # 定义Stage1模块倒残差模块的参数 InvertedResidualConfig
     # in_planes, expanded_planes, out_planes, kernel, stride, activation, use_se, width_multi
     stage1_setting = [
-        bneck_conf(16, 64, 32, 3, 1, "RE", False),
-        bneck_conf(32, 128, 64, 3, 2, "RE", False),
-        bneck_conf(64, 256, 128, 3, 1, "RE", False),
-        bneck_conf(128, 512, 256, 3, 1, "RE", False),
+        bneck_conf(32, 128, 32, 3, 1, "RE", False),
+        bneck_conf(32, 128, 32, 3, 1, "RE", False),
+        bneck_conf(32, 128, 32, 3, 1, "RE", False),
+        bneck_conf(32, 128, 32, 3, 1, "RE", False),
     ]
     inverted_residual_setting = dict(stage1=stage1_setting)
 
