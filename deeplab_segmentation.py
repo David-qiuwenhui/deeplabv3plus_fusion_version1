@@ -111,7 +111,9 @@ class DeeplabV3_Segmentation(object):
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.net.load_state_dict(torch.load(self.model_path, map_location=device))
+        self.net.load_state_dict(
+            torch.load(self.model_path, map_location=device), strict=False
+        )
         # repvgg切换到部署模式需要先载入模型的训练权重参数 再切换成部署模式
         if self.deploy:
             self.net.switch_to_deploy()
@@ -158,7 +160,8 @@ class DeeplabV3_Segmentation(object):
             # ---------------------------------------------------#
             #   图片传入网络进行预测
             # ---------------------------------------------------#
-            pr = self.net(images)[0]
+            pr = self.net(images).main
+            pr = pr.squeeze(dim=0)
             # ---------------------------------------------------#
             #   取出每一个像素点的种类
             # ---------------------------------------------------#
@@ -282,7 +285,8 @@ class DeeplabV3_Segmentation(object):
             # ---------------------------------------------------#
             #   图片传入网络进行预测
             # ---------------------------------------------------#
-            pr = self.net(images)[0]
+            pr = self.net(images).main
+            pr = pr.squeeze(dim=0)
             # ---------------------------------------------------#
             #   取出每一个像素点的种类
             # ---------------------------------------------------#
@@ -305,7 +309,8 @@ class DeeplabV3_Segmentation(object):
                 # ---------------------------------------------------#
                 #   图片传入网络进行预测
                 # ---------------------------------------------------#
-                pr = self.net(images)[0]
+                pr = self.net(images).main
+                pr = pr.squeeze(dim=0)
                 # ---------------------------------------------------#
                 #   取出每一个像素点的种类
                 # ---------------------------------------------------#
@@ -357,7 +362,8 @@ class DeeplabV3_Segmentation(object):
             # ---------------------------------------------------#
             #   图片传入网络进行预测
             # ---------------------------------------------------#
-            pr = self.net(images)[0]
+            pr = self.net(images).main
+            pr = pr.squeeze(dim=0)
             # ---------------------------------------------------#
             #   取出每一个像素点的种类
             # ---------------------------------------------------#

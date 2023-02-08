@@ -3,6 +3,7 @@
 @Software: VSCode
 @Time: 2023-02-06 23:02:12
 """
+from collections import namedtuple
 from functools import partial
 from typing import Callable, List, Optional
 from torch import Tensor
@@ -475,12 +476,12 @@ class DeepLabV3PlusFusion(nn.Module):
 
         # ******************** Stage3 ********************
         self.stage3 = nn.Sequential(
-            StageModule(
-                input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
-            ),
-            StageModule(
-                input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
-            ),
+            # StageModule(
+            #     input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
+            # ),
+            # StageModule(
+            #     input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
+            # ),
             StageModule(
                 input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
             ),
@@ -515,9 +516,9 @@ class DeepLabV3PlusFusion(nn.Module):
         # ******************** Stage4 ********************
         # 注意，最后一个StageModule只输出分辨率最高的特征层
         self.stage4 = nn.Sequential(
-            StageModule(
-                input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
-            ),
+            # StageModule(
+            #     input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
+            # ),
             StageModule(
                 input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
             ),
@@ -573,16 +574,11 @@ class DeepLabV3PlusFusion(nn.Module):
         x = self.stage4(x)  # x[x0(B,32,H/4,W/4)] 所有分支上采样至(H/4,W/4)后逐像素点相加输出
         stage4_features = x[0]  # Stage4层的特征图
 
-        # return (
-        #     conv1_features,
-        #     stage1_features,
-        #     stage2_features,
-        #     stage3_features,
-        #     stage4_features,
-        #     x[0],
-        # )
+        Outputs = namedtuple(
+            "outputs", ["main", "conv1", "stage1", "stage2", "stage3", "stage4"]
+        )
 
-        return dict(
+        return Outputs(
             main=x[0],
             conv1=conv1_features,
             stage1=stage1_features,

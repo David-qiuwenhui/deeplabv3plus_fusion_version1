@@ -13,38 +13,31 @@ def compute_loss(
 ):
     loss_function = Focal_Loss if focal_loss else CE_Loss
     loss = 0.0
-    if aux_branch and type(inputs) is dict:
-        print(f"\033[1;33;44m 🔘🔘🔘🔘 使用辅助分类器计算模型的训练损失值 \033[0m")
+    if aux_branch:
+        # print(f"\033[1;33;44m 🔘🔘🔘🔘 使用辅助分类器计算模型的训练损失值 \033[0m")
         # ----------------------#
         #   计算主分支和辅助分类器的损失
         # ----------------------#
         # aux classification
-        loss += 0.1 * loss_function(
-            inputs["stage2_aux"], target, cls_weights, num_classes
-        )
-        loss += 0.2 * loss_function(
-            inputs["stage3_aux"], target, cls_weights, num_classes
-        )
-        loss += 0.3 * loss_function(
-            inputs["stage4_aux"], target, cls_weights, num_classes
-        )
+        loss += 0.1 * loss_function(inputs.stage2_aux, target, cls_weights, num_classes)
+        loss += 0.2 * loss_function(inputs.stage3_aux, target, cls_weights, num_classes)
+        loss += 0.3 * loss_function(inputs.stage4_aux, target, cls_weights, num_classes)
         # main classification
-        loss += 1.0 * loss_function(inputs["main"], target, cls_weights, num_classes)
+        loss += 1.0 * loss_function(inputs.main, target, cls_weights, num_classes)
 
         if dice_loss:
-            loss += 0.1 * Dice_loss(inputs["stage2_aux"], labels)
-            loss += 0.2 * Dice_loss(inputs["stage3_aux"], labels)
-            loss += 0.3 * Dice_loss(inputs["stage4_aux"], labels)
-            loss += 1.0 * Dice_loss(inputs["main"], labels)
+            loss += 0.1 * Dice_loss(inputs.stage2_aux, labels)
+            loss += 0.2 * Dice_loss(inputs.stage3_aux, labels)
+            loss += 0.3 * Dice_loss(inputs.stage4_aux, labels)
+            loss += 1.0 * Dice_loss(inputs.main, labels)
     else:
         # ----------------------#
         #   计算主分支的损失
         # ----------------------#
-        inputs = inputs["main"] if type(inputs) is dict else inputs
-        loss += loss_function(inputs, target, cls_weights, num_classes)
+        loss += loss_function(inputs.main, target, cls_weights, num_classes)
 
         if dice_loss:
-            loss += Dice_loss(inputs, labels)
+            loss += Dice_loss(inputs.main, labels)
 
     return loss
 
@@ -123,7 +116,7 @@ def fit_one_epoch(
 
             with torch.no_grad():
                 # ******************** 计算f_score ********************
-                _f_score = f_score(outputs, labels)
+                _f_score = f_score(outputs.main, labels)
 
             # ******************** 反向传播 ********************
             loss.backward()
@@ -150,7 +143,8 @@ def fit_one_epoch(
 
                 with torch.no_grad():
                     # ******************** 计算f_score ********************
-                    _f_score = f_score(outputs, labels)
+
+                    _f_score = f_score(outputs.main, labels)
 
             # ******************** 反向传播 ********************
             scaler.scale(loss).backward()
@@ -214,7 +208,7 @@ def fit_one_epoch(
             assert loss is not None
 
             # ******************** 计算f_score ********************
-            _f_score = f_score(outputs, labels)
+            _f_score = f_score(outputs.main, labels)
 
             val_loss += loss.item()
             val_f_score += _f_score.item()

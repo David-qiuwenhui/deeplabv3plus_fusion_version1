@@ -18,7 +18,7 @@ val_cfg = dict(
     miou_mode=0,  # 0, 1, 2
     mix_type=1,  # 0混合, 1仅原图, 2仅原图中的目标_扣去背景 get_miou不起作用
     # ---------- 卷积模型的参数 ----------
-    model_path="./logs/deeplabv3plus_fusion/ep390-loss0.229-val_loss0.437.pth",
+    model_path="./logs/deeplabv3plus_fusion/last_epoch_weights.pth",
     # xception, mobilenet, resnet50, resnext50, repvgg_new
     # hrnet, hrnet_new, swin_transformer, mobilevit, mobilenetv3
     # deeplabv3plus_fusion

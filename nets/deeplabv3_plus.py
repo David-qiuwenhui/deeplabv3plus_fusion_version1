@@ -1,3 +1,4 @@
+from collections import namedtuple
 from typing import Callable, Optional
 import torch
 import torch.nn as nn
@@ -320,7 +321,7 @@ class DeepLab(nn.Module):
         #   主干特征提取网络
         # -----------------------------------------#
         if self.backbone_name in ["deeplabv3plus_fusion"]:
-            out = self.backbone(x)
+            outputs = self.backbone(x)
             (
                 conv1_features,
                 stage1_features,
@@ -329,12 +330,12 @@ class DeepLab(nn.Module):
                 stage4_features,
                 x,
             ) = (
-                out["conv1"],
-                out["stage1"],
-                out["stage2"],
-                out["stage3"],
-                out["stage4"],
-                out["main"],
+                outputs.conv1,
+                outputs.stage1,
+                outputs.stage2,
+                outputs.stage3,
+                outputs.stage4,
+                outputs.main,
             )
 
         # -----------------------------------------#
@@ -414,14 +415,18 @@ class DeepLab(nn.Module):
         )  # x(B, N, H, W)
 
         if self.aux_branch:
-            return dict(
+            Outputs = namedtuple(
+                "outputs", ["main", "stage2_aux", "stage3_aux", "stage4_aux"]
+            )
+            return Outputs(
                 main=x,
                 stage2_aux=stage2_aux,
                 stage3_aux=stage3_aux,
                 stage4_aux=stage4_aux,
             )
         else:
-            return x
+            Outputs = namedtuple("outputs", ["main"])
+            return Outputs(main=x)
 
     def switch_to_deploy(self):
         if self.backbone_name in ["repvgg_new"]:
