@@ -23,7 +23,7 @@ pred_cfg = dict(
     # deeplabv3plus_fusion
     backbone="deeplabv3plus_fusion",
     input_shape=[512, 512],
-    downsample_factor=8,
+    downsample_factor=4,
     deploy=True,
     num_classes=7,
     name_classes=[

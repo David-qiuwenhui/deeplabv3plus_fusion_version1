@@ -297,7 +297,7 @@ class DeepLab(nn.Module):
         )
 
         self.aux_branch = aux_branch
-        if aux_branch:
+        if self.aux_branch:
             self.aux_classifier_stage2 = nn.Sequential(
                 ConvBNActivation(stage2_channels, stage2_channels, kernel_size=3),
                 nn.Dropout2d(0.1),
@@ -348,21 +348,22 @@ class DeepLab(nn.Module):
         #   stage3 (base_c, H/4, W/4)
         #   stage4 (base_c, H/4, W/4)
         # -----------------------------------------#
-        # stage2 (base_c, H/4, W/4)
-        stage2_aux = self.aux_classifier_stage2(stage2_features)
-        stage2_aux = F.interpolate(
-            stage2_aux, size=(H, W), mode="bilinear", align_corners=True
-        )
-        # stage3 (base_c, H/4, W/4)
-        stage3_aux = self.aux_classifier_stage3(stage3_features)
-        stage3_aux = F.interpolate(
-            stage3_aux, size=(H, W), mode="bilinear", align_corners=True
-        )
-        # stage4 (base_c, H/4, W/4)
-        stage4_aux = self.aux_classifier_stage4(stage4_features)
-        stage4_aux = F.interpolate(
-            stage4_aux, size=(H, W), mode="bilinear", align_corners=True
-        )
+        if self.aux_branch:
+            # stage2 (base_c, H/4, W/4)
+            stage2_aux = self.aux_classifier_stage2(stage2_features)
+            stage2_aux = F.interpolate(
+                stage2_aux, size=(H, W), mode="bilinear", align_corners=True
+            )
+            # stage3 (base_c, H/4, W/4)
+            stage3_aux = self.aux_classifier_stage3(stage3_features)
+            stage3_aux = F.interpolate(
+                stage3_aux, size=(H, W), mode="bilinear", align_corners=True
+            )
+            # stage4 (base_c, H/4, W/4)
+            stage4_aux = self.aux_classifier_stage4(stage4_features)
+            stage4_aux = F.interpolate(
+                stage4_aux, size=(H, W), mode="bilinear", align_corners=True
+            )
 
         # -----------------------------------------#
         #   浅中层特征图的传递和卷积处理
@@ -412,9 +413,15 @@ class DeepLab(nn.Module):
             input=x, size=(H, W), mode="bilinear", align_corners=True
         )  # x(B, N, H, W)
 
-        return dict(
-            main=x, stage2_aux=stage2_aux, stage3_aux=stage3_aux, stage4_aux=stage4_aux
-        )
+        if self.aux_branch:
+            return dict(
+                main=x,
+                stage2_aux=stage2_aux,
+                stage3_aux=stage3_aux,
+                stage4_aux=stage4_aux,
+            )
+        else:
+            return x
 
     def switch_to_deploy(self):
         if self.backbone_name in ["repvgg_new"]:

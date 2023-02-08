@@ -13,11 +13,10 @@ from nets.repvgg_new import repvgg_model_convert
 model_cfg = dict(
     input_shape=[512, 512],
     num_classes=7,
-    # xception, mobilenet, resnet50, resnext50, repvgg_new
-    # hrnet, hrnet_new, swin_transformer, mobilevit, mobilenetv3
     # deeplabv3plus_fusion
     backbone="deeplabv3plus_fusion",
-    downsample_factor=8,
+    downsample_factor=4,
+    aux_branch=False,
     deploy=True,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
 )
@@ -29,15 +28,11 @@ def main(model_cfg):
     backbone = model_cfg["backbone"]
     device = model_cfg["device"]
     downsample_factor = model_cfg["downsample_factor"]
+    aux_branch = model_cfg["aux_branch"]
     deploy = model_cfg["deploy"]
 
     # ---------- 实例化深度卷积模型 ----------
-    model = DeepLab(
-        num_classes,
-        backbone,
-        pretrained=False,
-        downsample_factor=downsample_factor,
-    ).to(device)
+    model = DeepLab(num_classes, backbone, downsample_factor, aux_branch).to(device)
     if deploy:
         if backbone in ["repvgg_new"]:
             model = repvgg_model_convert(model)

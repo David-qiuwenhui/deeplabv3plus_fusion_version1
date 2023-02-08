@@ -107,10 +107,7 @@ class DeeplabV3_Segmentation(object):
         #   载入模型与权值
         # -------------------------------#
         self.net = DeepLab(
-            self.num_classes,
-            self.backbone,
-            pretrained=False,
-            downsample_factor=self.downsample_factor,
+            self.num_classes, self.backbone, self.downsample_factor, aux_branch=self.aux
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
