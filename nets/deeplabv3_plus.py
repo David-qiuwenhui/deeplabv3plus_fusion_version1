@@ -47,45 +47,6 @@ class ConvBNActivation(nn.Sequential):
         )  # inplace=True 不创建新的对象，直接对原始对象进行修改
 
 
-class MobileNetV2(nn.Module):
-    def __init__(self, pretrained=True, downsample_factor=8):
-        super(MobileNetV2, self).__init__()
-        from functools import partial
-
-        model = mobilenetv2(pretrained)
-        self.features = model.features[:-1]
-
-        self.total_idx = len(self.features)
-        self.down_idx = [2, 4, 7, 14]
-
-        if downsample_factor == 8:
-            for i in range(self.down_idx[-2], self.down_idx[-1]):
-                self.features[i].apply(partial(self._nostride_dilate, dilate=2))
-            for i in range(self.down_idx[-1], self.total_idx):
-                self.features[i].apply(partial(self._nostride_dilate, dilate=4))
-        elif downsample_factor == 16:
-            for i in range(self.down_idx[-1], self.total_idx):
-                self.features[i].apply(partial(self._nostride_dilate, dilate=2))
-
-    def _nostride_dilate(self, m, dilate):
-        classname = m.__class__.__name__
-        if classname.find("Conv") != -1:
-            if m.stride == (2, 2):
-                m.stride = (1, 1)
-                if m.kernel_size == (3, 3):
-                    m.dilation = (dilate // 2, dilate // 2)
-                    m.padding = (dilate // 2, dilate // 2)
-            else:
-                if m.kernel_size == (3, 3):
-                    m.dilation = (dilate, dilate)
-                    m.padding = (dilate, dilate)
-
-    def forward(self, x):
-        low_level_features = self.features[:4](x)
-        x = self.features[4:](low_level_features)
-        return low_level_features, x
-
-
 # -----------------------------------------#
 #   ASPP特征提取模块
 #   利用不同膨胀率的膨胀卷积进行特征提取
@@ -103,7 +64,7 @@ class ASPP(nn.Module):
                 kernel_size=1,
                 stride=1,
                 padding=0,
-                dilation=rate,
+                dilation=1,
                 bias=True,
             ),
             nn.BatchNorm2d(num_features=dim_out, momentum=bn_mom),
@@ -223,9 +184,8 @@ class DeepLab(nn.Module):
         self,
         num_classes,
         backbone,
-        pretrained=False,
-        downsample_factor=8,
-        backbone_path="",
+        downsample_factor=4,
+        aux_branch=False,
     ):
         super(DeepLab, self).__init__()
         self.backbone_name = backbone
@@ -263,35 +223,35 @@ class DeepLab(nn.Module):
         # ----------------------------------#
         #   浅、中层特征图的卷积传递层
         # ----------------------------------#
-        self.shortcut_conv0 = ConvBNActivation(
+        self.conv0_shortcut = ConvBNActivation(
             in_planes=conv1_channels,
             out_planes=conv1_channels,
             kernel_size=1,
             stride=1,
         )
 
-        self.shortcut_conv1 = ConvBNActivation(
+        self.stage1_shortcut = ConvBNActivation(
             in_planes=stage1_channels,
             out_planes=stage1_channels,
             kernel_size=1,
             stride=1,
         )
 
-        self.shortcut_conv2 = ConvBNActivation(
+        self.stage2_shortcut = ConvBNActivation(
             in_planes=stage2_channels,
             out_planes=stage2_channels,
             kernel_size=1,
             stride=1,
         )
 
-        self.shortcut_conv3 = ConvBNActivation(
+        self.stage3_shortcut = ConvBNActivation(
             in_planes=stage3_channels,
             out_planes=stage3_channels,
             kernel_size=1,
             stride=1,
         )
 
-        self.shortcut_conv4 = ConvBNActivation(
+        self.stage4_shortcut = ConvBNActivation(
             in_planes=stage4_channels,
             out_planes=stage4_channels,
             kernel_size=1,
@@ -307,20 +267,25 @@ class DeepLab(nn.Module):
                 out_planes=256,
                 kernel_size=3,
             ),
+            nn.Dropout2d(0.1),
             ConvBNActivation(
                 in_planes=256,
                 out_planes=256,
                 kernel_size=3,
             ),
+            nn.Dropout2d(0.1),
         )
 
         # ----------------------------------#
         #   第二阶段的深浅层次特征图卷积处理模块
         # ----------------------------------#
-        self.cat_conv2 = ConvBNActivation(
-            in_planes=256 + conv1_channels,
-            out_planes=256,
-            kernel_size=3,
+        self.cat_conv2 = nn.Sequential(
+            ConvBNActivation(
+                in_planes=256 + conv1_channels,
+                out_planes=256,
+                kernel_size=3,
+            ),
+            nn.Dropout2d(0.1),
         )
 
         # ----------------------------------#
@@ -328,8 +293,26 @@ class DeepLab(nn.Module):
         # ----------------------------------#
         # 更改channels至num_classes
         self.cls_conv = nn.Conv2d(
-            in_channels=256, out_channels=num_classes, kernel_size=1, stride=1
+            in_channels=256, out_channels=num_classes, kernel_size=1
         )
+
+        self.aux_branch = aux_branch
+        if aux_branch:
+            self.aux_classifier_stage2 = nn.Sequential(
+                ConvBNActivation(stage2_channels, stage2_channels, kernel_size=3),
+                nn.Dropout2d(0.1),
+                nn.Conv2d(stage2_channels, num_classes, kernel_size=1),
+            )
+            self.aux_classifier_stage3 = nn.Sequential(
+                ConvBNActivation(stage3_channels, stage3_channels, kernel_size=3),
+                nn.Dropout2d(0.1),
+                nn.Conv2d(stage3_channels, num_classes, kernel_size=1),
+            )
+            self.aux_classifier_stage4 = nn.Sequential(
+                ConvBNActivation(stage4_channels, stage4_channels, kernel_size=3),
+                nn.Dropout2d(0.1),
+                nn.Conv2d(stage4_channels, num_classes, kernel_size=1),
+            )
 
     def forward(self, x):
         H, W = x.size(2), x.size(3)  # x(B,3,H,W)
@@ -337,6 +320,7 @@ class DeepLab(nn.Module):
         #   主干特征提取网络
         # -----------------------------------------#
         if self.backbone_name in ["deeplabv3plus_fusion"]:
+            out = self.backbone(x)
             (
                 conv1_features,
                 stage1_features,
@@ -344,7 +328,14 @@ class DeepLab(nn.Module):
                 stage3_features,
                 stage4_features,
                 x,
-            ) = self.backbone(x)
+            ) = (
+                out["conv1"],
+                out["stage1"],
+                out["stage2"],
+                out["stage3"],
+                out["stage4"],
+                out["main"],
+            )
 
         # -----------------------------------------#
         #   膨胀卷积池化金字塔模块
@@ -352,13 +343,35 @@ class DeepLab(nn.Module):
         x = self.aspp(x)  # x(B,256,H/4,W/4)
 
         # -----------------------------------------#
+        #   辅助分支的特征上采样至原图大小
+        #   stage2 (base_c, H/4, W/4)
+        #   stage3 (base_c, H/4, W/4)
+        #   stage4 (base_c, H/4, W/4)
+        # -----------------------------------------#
+        # stage2 (base_c, H/4, W/4)
+        stage2_aux = self.aux_classifier_stage2(stage2_features)
+        stage2_aux = F.interpolate(
+            stage2_aux, size=(H, W), mode="bilinear", align_corners=True
+        )
+        # stage3 (base_c, H/4, W/4)
+        stage3_aux = self.aux_classifier_stage3(stage3_features)
+        stage3_aux = F.interpolate(
+            stage3_aux, size=(H, W), mode="bilinear", align_corners=True
+        )
+        # stage4 (base_c, H/4, W/4)
+        stage4_aux = self.aux_classifier_stage4(stage4_features)
+        stage4_aux = F.interpolate(
+            stage4_aux, size=(H, W), mode="bilinear", align_corners=True
+        )
+
+        # -----------------------------------------#
         #   浅中层特征图的传递和卷积处理
         # -----------------------------------------#
-        conv1_features = self.shortcut_conv0(conv1_features)
-        stage1_features = self.shortcut_conv1(stage1_features)
-        stage2_features = self.shortcut_conv2(stage2_features)
-        stage3_features = self.shortcut_conv3(stage3_features)
-        stage4_features = self.shortcut_conv4(stage4_features)
+        conv1_features = self.conv0_shortcut(conv1_features)
+        stage1_features = self.stage1_shortcut(stage1_features)
+        stage2_features = self.stage2_shortcut(stage2_features)
+        stage3_features = self.stage3_shortcut(stage3_features)
+        stage4_features = self.stage4_shortcut(stage4_features)
 
         # -----------------------------------------#
         #   第一阶段的深浅层特征融合
@@ -398,7 +411,10 @@ class DeepLab(nn.Module):
         x = F.interpolate(
             input=x, size=(H, W), mode="bilinear", align_corners=True
         )  # x(B, N, H, W)
-        return x
+
+        return dict(
+            main=x, stage2_aux=stage2_aux, stage3_aux=stage3_aux, stage4_aux=stage4_aux
+        )
 
     def switch_to_deploy(self):
         if self.backbone_name in ["repvgg_new"]:

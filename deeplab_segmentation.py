@@ -1,7 +1,6 @@
 import colorsys
 import copy
 import json
-import time
 
 import cv2
 import numpy as np

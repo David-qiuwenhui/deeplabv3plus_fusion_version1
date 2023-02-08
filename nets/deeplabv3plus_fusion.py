@@ -573,13 +573,22 @@ class DeepLabV3PlusFusion(nn.Module):
         x = self.stage4(x)  # x[x0(B,32,H/4,W/4)] 所有分支上采样至(H/4,W/4)后逐像素点相加输出
         stage4_features = x[0]  # Stage4层的特征图
 
-        return (
-            conv1_features,
-            stage1_features,
-            stage2_features,
-            stage3_features,
-            stage4_features,
-            x[0],
+        # return (
+        #     conv1_features,
+        #     stage1_features,
+        #     stage2_features,
+        #     stage3_features,
+        #     stage4_features,
+        #     x[0],
+        # )
+
+        return dict(
+            main=x[0],
+            conv1=conv1_features,
+            stage1=stage1_features,
+            stage2=stage2_features,
+            stage3=stage3_features,
+            stage4=stage4_features,
         )
 
 

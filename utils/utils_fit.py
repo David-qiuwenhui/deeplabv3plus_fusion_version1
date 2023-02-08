@@ -8,6 +8,47 @@ from utils.utils import get_lr
 from utils.utils_metrics import f_score
 
 
+def compute_loss(
+    aux_branch, inputs, focal_loss, dice_loss, target, cls_weights, num_classes, labels
+):
+    loss_function = Focal_Loss if focal_loss else CE_Loss
+    loss = 0.0
+    if aux_branch and type(inputs) is dict:
+        print(f"\033[1;33;44m 🔘🔘🔘🔘 使用辅助分类器计算模型的训练损失值 \033[0m")
+        # ----------------------#
+        #   计算主分支和辅助分类器的损失
+        # ----------------------#
+        # aux classification
+        loss += 0.1 * loss_function(
+            inputs["stage2_aux"], target, cls_weights, num_classes
+        )
+        loss += 0.2 * loss_function(
+            inputs["stage3_aux"], target, cls_weights, num_classes
+        )
+        loss += 0.3 * loss_function(
+            inputs["stage4_aux"], target, cls_weights, num_classes
+        )
+        # main classification
+        loss += 1.0 * loss_function(inputs["main"], target, cls_weights, num_classes)
+
+        if dice_loss:
+            loss += 0.1 * Dice_loss(inputs["stage2_aux"], labels)
+            loss += 0.2 * Dice_loss(inputs["stage3_aux"], labels)
+            loss += 0.3 * Dice_loss(inputs["stage4_aux"], labels)
+            loss += 1.0 * Dice_loss(inputs["main"], labels)
+    else:
+        # ----------------------#
+        #   计算主分支的损失
+        # ----------------------#
+        inputs = inputs["main"] if type(inputs) is dict else inputs
+        loss += loss_function(inputs, target, cls_weights, num_classes)
+
+        if dice_loss:
+            loss += Dice_loss(inputs, labels)
+
+    return loss
+
+
 def fit_one_epoch(
     model_train,
     model,
@@ -24,6 +65,7 @@ def fit_one_epoch(
     dice_loss,
     focal_loss,
     cls_weights,
+    aux_branch,
     num_classes,
     fp16,
     scaler,
@@ -37,6 +79,9 @@ def fit_one_epoch(
     val_loss = 0
     val_f_score = 0
 
+    # ------------------------------------------------------------------#
+    #   模型训练模式
+    # ------------------------------------------------------------------#
     if local_rank == 0:
         print("---------- Start Train ----------")
         pbar = tqdm(
@@ -58,72 +103,56 @@ def fit_one_epoch(
                 pngs = pngs.cuda(local_rank)
                 labels = labels.cuda(local_rank)
                 weights = weights.cuda(local_rank)
-        # ----------------------#
-        #   清零梯度
-        # ----------------------#
+        # ******************** 清零梯度 ********************
         optimizer.zero_grad()
         if not fp16:
-            # ----------------------#
-            #   前向传播
-            # ----------------------#
+            # ******************** 前向传播 ********************
             outputs = model_train(imgs)
-            # ----------------------#
-            #   计算损失
-            # ----------------------#
-            if focal_loss:
-                loss = Focal_Loss(outputs, pngs, weights, num_classes=num_classes)
-            else:
-                loss = CE_Loss(outputs, pngs, weights, num_classes=num_classes)
-
-            if dice_loss:
-                main_dice = Dice_loss(outputs, labels)
-                loss = loss + main_dice
+            # ******************** 计算损失 ********************
+            loss = compute_loss(
+                aux_branch,
+                outputs,
+                focal_loss,
+                dice_loss,
+                pngs,
+                weights,
+                num_classes,
+                labels,
+            )
+            assert loss is not None
 
             with torch.no_grad():
-                # -------------------------------#
-                #   计算f_score
-                # -------------------------------#
+                # ******************** 计算f_score ********************
                 _f_score = f_score(outputs, labels)
 
-            # ----------------------#
-            #   反向传播
-            # ----------------------#
+            # ******************** 反向传播 ********************
             loss.backward()
             optimizer.step()
         else:
             from torch.cuda.amp import autocast
 
+            # 混合精度计算
             with autocast():
-                # ----------------------#
-                #   前向传播
-                # ----------------------#
+                # ******************** 前向传播 ********************
                 outputs = model_train(imgs)
-                # ----------------------#
-                #   计算损失
-                # ----------------------#
-                if focal_loss:
-                    loss = Focal_Loss(
-                        inputs=outputs,
-                        target=pngs,
-                        cls_weights=weights,
-                        num_classes=num_classes,
-                    )
-                else:
-                    loss = CE_Loss(outputs, pngs, weights, num_classes=num_classes)
-
-                if dice_loss:
-                    main_dice = Dice_loss(outputs, labels)
-                    loss = loss + main_dice
+                # ******************** 计算损失 ********************
+                loss = compute_loss(
+                    aux_branch,
+                    outputs,
+                    focal_loss,
+                    dice_loss,
+                    pngs,
+                    weights,
+                    num_classes,
+                    labels,
+                )
+                assert loss is not None
 
                 with torch.no_grad():
-                    # -------------------------------#
-                    #   计算f_score
-                    # -------------------------------#
+                    # ******************** 计算f_score ********************
                     _f_score = f_score(outputs, labels)
 
-            # ----------------------#
-            #   反向传播
-            # ----------------------#
+            # ******************** 反向传播 ********************
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -141,6 +170,9 @@ def fit_one_epoch(
             )
             pbar.update(1)
 
+    # ------------------------------------------------------------------#
+    #   模型验证模式
+    # ------------------------------------------------------------------#
     if local_rank == 0:
         pbar.close()
         print("--------- Finish Train ----------")
@@ -164,24 +196,24 @@ def fit_one_epoch(
                 pngs = pngs.cuda(local_rank)
                 labels = labels.cuda(local_rank)
                 weights = weights.cuda(local_rank)
-            # ----------------------#
-            #   前向传播
-            # ----------------------#
-            outputs = model_train(imgs)
-            # ----------------------#
-            #   计算损失
-            # ----------------------#
-            if focal_loss:
-                loss = Focal_Loss(outputs, pngs, weights, num_classes=num_classes)
-            else:
-                loss = CE_Loss(outputs, pngs, weights, num_classes=num_classes)
 
-            if dice_loss:
-                main_dice = Dice_loss(outputs, labels)
-                loss = loss + main_dice
-            # -------------------------------#
-            #   计算f_score
-            # -------------------------------#
+            # ******************** 前向传播 ********************
+            outputs = model_train(imgs)
+
+            # ******************** 计算损失 ********************
+            loss = compute_loss(
+                False,
+                outputs,
+                focal_loss,
+                dice_loss,
+                pngs,
+                weights,
+                num_classes,
+                labels,
+            )
+            assert loss is not None
+
+            # ******************** 计算f_score ********************
             _f_score = f_score(outputs, labels)
 
             val_loss += loss.item()

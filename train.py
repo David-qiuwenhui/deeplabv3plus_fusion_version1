@@ -23,22 +23,18 @@ model_cfg = dict(
     # ---------- 数据集超参数 -----------
     data_path="../../dataset/SUIMdevkit",  # dataset root
     # ---------- 卷积模型超参数 ----------
-    # xception, mobilenet, resnet50, resnext50, repvgg_new
-    # hrnet, hrnet_new, swin_transformer, mobilevit, mobilenetv3
-    # deeplabv3plus_fusion
-    backbone="deeplabv3plus_fusion",  #  所使用的的主干网络 "mobilenet", "xception"
+    backbone="deeplabv3plus_fusion",
     num_classes=7,
     input_shape=[512, 512],  # the size of input image
-    downsample_factor=8,
-    aux_branch=None,  # auxilier loss 辅助分类器
-    pretrained_backbone=False,
-    backbone_path="",
+    downsample_factor=4,  # 主分支在ASPP前的下采样倍率
+    aux_branch=True,  # auxilier loss 辅助分类器
     # ---------- 硬件的超参数 ----------
     cuda=True,
     amp=True,  # fp16 混合精度训练
     distributed=False,  # 用于指定是否使用单机多卡分布式运行
     sync_bn=False,  # 是否使用sync_bn，DDP模式多卡可用
     # ---------- 训练Epoch和Batch size超参数 ----------
+    init_model_weights=True,  # 初始化模型的权重参数
     freeze_train=False,
     freeze_batch_size=8,
     unfreeze_batch_size=8,
@@ -73,11 +69,9 @@ def main(model_cfg):
     # ---------- 卷积模型超参数 ----------
     num_classes = model_cfg["num_classes"]  # num_classes + background
     backbone = model_cfg["backbone"]
-    pretrained = model_cfg["pretrained_backbone"]  # 是否使用主干网络预训练权重
-    backbone_path = model_cfg["backbone_path"]
-
     downsample_factor = model_cfg["downsample_factor"]
     input_shape = model_cfg["input_shape"]  # 输入图片的大小
+    aux_branch = model_cfg["aux_branch"]  # 使用辅助分类器
     model_path = model_cfg["model_path"]  # 卷积模型的预训练权重
     Init_Epoch = model_cfg["init_epoch"]
     Freeze_Epoch = model_cfg["freeze_epochs"]
@@ -150,11 +144,10 @@ def main(model_cfg):
         local_rank = 0
 
     # ---------- 实例化卷积神经网络模型 ----------
-    model = DeepLab(num_classes, backbone, pretrained, downsample_factor, backbone_path)
+    model = DeepLab(num_classes, backbone, downsample_factor, aux_branch)
     # ----------------------------------------
-    # 若不载入预训练权重参数 初始化模型的权重参数
-    if not pretrained:
-        weights_init(model)
+
+    # 载入预训练权重参数或初始化模型的权重参数
     if model_path != "":
         if local_rank == 0:
             print("Load weights {}.".format(model_path))
@@ -184,6 +177,10 @@ def main(model_cfg):
                 len(no_load_key),
             )
             print("\n\033[1;33;44m温馨提示，head部分没有载入是正常现象，Backbone部分没有载入是错误的。\033[0m")
+    elif model_cfg["init_model_weights"]:
+        weights_init(model, init_type="kaiming")
+    else:
+        raise ValueError("请检查模型载入权重参数的形式（自动初始化或加载预训练权重）")
 
     # 记录Loss
     if local_rank == 0:
@@ -508,6 +505,7 @@ def main(model_cfg):
             dice_loss,
             focal_loss,
             cls_weights,
+            aux_branch,
             num_classes,
             fp16,
             scaler,
