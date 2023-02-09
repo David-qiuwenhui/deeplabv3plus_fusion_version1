@@ -482,9 +482,9 @@ class DeepLabV3PlusFusion(nn.Module):
             # StageModule(
             #     input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
             # ),
-            StageModule(
-                input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
-            ),
+            # StageModule(
+            #     input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
+            # ),
             StageModule(
                 input_branches=3, output_branches=3, c=base_channel, expanded_rate=4
             ),
@@ -519,9 +519,9 @@ class DeepLabV3PlusFusion(nn.Module):
             # StageModule(
             #     input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
             # ),
-            StageModule(
-                input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
-            ),
+            # StageModule(
+            #     input_branches=4, output_branches=4, c=base_channel, expanded_rate=4
+            # ),
             StageModule(
                 input_branches=4, output_branches=1, c=base_channel, expanded_rate=4
             ),
